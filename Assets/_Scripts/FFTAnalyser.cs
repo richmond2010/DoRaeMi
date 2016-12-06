@@ -1,6 +1,5 @@
 ﻿using UnityEngine;
-using System.Collections;
-using System.Collections.Generic;
+using System.Linq;
 
 [RequireComponent (typeof(AudioSource))]
 public class FFTAnalyser : MonoBehaviour {
@@ -9,7 +8,7 @@ public class FFTAnalyser : MonoBehaviour {
 	/// <summary>Sample count.</summary>
 	private const int SAMPLE_COUNT = 1024;
 	/// <summary>Minimum RMS volume to extract the pitch.</summary>
-	private const float THRESHOLD = 0.01f;
+	private const float THRESHOLD = 0.02f;
 
 	/// <summary>The current instance of this script.</summary>
 	public static FFTAnalyser instance;
@@ -19,12 +18,12 @@ public class FFTAnalyser : MonoBehaviour {
 	/// <summary>Is sound detected?</summary>
 	public bool isSoundDetected = false;
 
-	/// <summary>Volume in RMS.</summary>
+	/// <summary>The volume of the recorded audio in RMS.</summary>
 	public float rmsValue;
-	/// <summary>Volume in decibels.</summary>
+	/// <summary>The volume of the recorded audio in decibels.</summary>
 	public float dbValue;
-	/// <summary>The frequency of the recorded audio.</summary>
-	public float pitchValue;
+	/// <summary>The frequency of the recorded audio in hertz.</summary>
+	public int hzValue;
 
 	/// <summary>The array of samples of recorded audio.</summary>
 	private float[] samples;
@@ -55,9 +54,47 @@ public class FFTAnalyser : MonoBehaviour {
 		// Gets volume and pitch values
 		AnalyseSound ();
 
-		if (pitchValue != 0) {
+		if (hzValue != 0) {
 			isSoundDetected = true;
-			Debug.Log ("Volume: " + dbValue.ToString ("F1") + " dB\n" + "Pitch: " + pitchValue.ToString ("F0") + " Hz");
+
+			// if all notes have already been calibrated
+			if (GameManager.instance.isCalibrated) {
+				if (PitchCalibrator.pitchFreqDict.Any (pitch => hzValue == pitch.Value)) {
+					Debug.Log (PitchCalibrator.pitchFreqDict.First (pitch => hzValue == pitch.Value).Key);
+				} else {
+					
+					for (int i = 0; i < PitchCalibrator.pitchFreqDict.Count; i++) {
+						if (PitchCalibrator.pitchFreqDict.ElementAt (i).Value < hzValue) {
+
+							try {
+								int avgPoint = (PitchCalibrator.pitchFreqDict.ElementAt (i).Value +
+								              PitchCalibrator.pitchFreqDict.ElementAt (i - 1).Value) / 2;
+
+								if ((int)hzValue >= avgPoint) {
+									Debug.Log (PitchCalibrator.pitchFreqDict.ElementAt (i).Key);
+								} else {
+									Debug.Log (PitchCalibrator.pitchFreqDict.ElementAt (i - 1).Key);
+								}
+							}
+							// if there is no previous element
+							catch (System.Exception) {
+								Debug.Log ("Pitch too low.");
+							}
+
+							return;
+						}
+					}
+
+					Debug.Log ("Pitch too high.");
+				}
+
+			}
+
+			// if uncalibrated
+			else {
+				PitchCalibrator.lastFrequency = hzValue;
+				Debug.Log ("Volume: " + dbValue.ToString ("F1") + " dB\n" + "Pitch: " + hzValue + " Hz");
+			}
 		} else {
 			isSoundDetected = false;
 		}
@@ -66,10 +103,10 @@ public class FFTAnalyser : MonoBehaviour {
 	/// <summary>Starts the mic listener in low latency.</summary>
 	void StartMicrophone () {
 		// starts the default microphone.
-		_audioSource.clip = Microphone.Start (Microphone.devices [0], true, 999, FREQUENCY);
+		_audioSource.clip = Microphone.Start ("OCTA-CAPTURE", true, 999, FREQUENCY);
 
-		// keeps the function in this loop if there are no 
-		while (!(Microphone.GetPosition (Microphone.devices [0]) > 0)) { }
+		// breaks out of the function if there are no microphones
+		while (!(Microphone.GetPosition ("OCTA-CAPTURE") > 0)) { }
 
 		_audioSource.Play ();
 	}
@@ -93,7 +130,7 @@ public class FFTAnalyser : MonoBehaviour {
 		}
 
 		// Obtains the audio spectrum
-		_audioSource.GetSpectrumData (spectrum, 0, FFTWindow.BlackmanHarris);
+		_audioSource.GetSpectrumData (spectrum, 0, FFTWindow.Blackman);
 		float highestSample = 0;
 		float sampleIndex = 0;
 
@@ -113,6 +150,6 @@ public class FFTAnalyser : MonoBehaviour {
 		}
 
 		// Convert index to frequency
-		pitchValue = sampleIndex * 24000 / SAMPLE_COUNT;
+		hzValue = (int)(sampleIndex * (FREQUENCY / 2) / SAMPLE_COUNT);
 	}
 }
